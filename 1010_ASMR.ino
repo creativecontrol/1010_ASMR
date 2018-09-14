@@ -77,7 +77,7 @@ AudioControlSGTL5000       sgtl5000_1;     //xy=381,791
 
 const int upperPotInput = 20;
 const int lowerPotInput = 21;
-const int kMaxPotInput  = 1024;
+const int potRange  = 1024;
 
 const int buttonInput = 2;
 const int topLED = 6;
@@ -104,7 +104,7 @@ int startNote = 0;
 int lastStartNote = 0;
 int spread = 1;
 int lastSpread = 1;
-int *scale; 
+int *scale = (int *) major; 
 int rotatePosition = 0;
 
 // Flag to update oscillators 
@@ -134,8 +134,6 @@ void setup(){
 
   multiosc1.begin();
   multiosc2.begin();
-
-  scale = (int *) major;
 
   // Start audio processing.
   AudioInterrupts();
@@ -180,6 +178,11 @@ int * scaleType(int cv) {
   }
 }
 
+void turnOffLEDs() {
+  digitalWrite(topLED, LOW);
+  digitalWrite(botLED, LOW);
+}
+
 /*
  * Update all oscillators via the software control inputs.
  */
@@ -204,8 +207,8 @@ void loop() {
   int upperKnob = analogRead(upperPotInput);
   int lowerKnob = analogRead(lowerPotInput);
   
-  startNote = map(upperKnob, 0, kMaxPotInput, 0, octave);
-  spread = map(lowerKnob, 0, kMaxPotInput, 1, scaleLength); // not sure about this value
+  startNote = map(upperKnob, 0, potRange, 0, octave);
+  spread = map(lowerKnob, 0, potRange, 1, scaleLength); // not sure about this value
   
   if(startNote != lastStartNote) {
     lastStartNote = startNote;
@@ -217,10 +220,12 @@ void loop() {
     readyForUpdate = true;
   }
 
+  // Button input reads low when pressed.
   if(digitalRead(buttonInput) == LOW) {
     rotatePosition += rotatePosition;
     rotatePosition = rotatePosition % scaleLength;
     readyForUpdate = true;
+    digitalWrite(topLED, HIGH);
   }
   
   if (cvIn1.available()) {
@@ -228,8 +233,10 @@ void loop() {
     float cvInput = calCvFromPeakValue(cvValue1, cvLow_IN1, cvHigh_IN1);
     if (cvInput < (cvCenterPoint_IN1 - cvDeadZone)){
       rotatePosition -= rotatePosition;
+      digitalWrite(botLED, HIGH);
     } else if (cvInput > (cvCenterPoint_IN1 + cvDeadZone)) {
       rotatePosition += rotatePosition;
+      digitalWrite(topLED, HIGH);
     }
     rotatePosition = rotatePosition % scaleLength;
     
@@ -247,6 +254,7 @@ void loop() {
   if (readyForUpdate) {
     updateOsc();
     readyForUpdate = false;
+    
   }
   
   delay(delayTime);
