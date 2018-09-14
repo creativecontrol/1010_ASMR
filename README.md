@@ -10,6 +10,6 @@ The ASMR consists of 8 oscillators. The user sets:
 - the rotation of the oscillator group (Offsets the starting note and all other oscillators relative to it. 
   Wraps around the entire group of scale notes.) 
 
-## Dependancies
+## Dependencies
 1010 Euroshield: https://1010music.com/product/euroshield1 \
 Proto-8 Teensy Audio Libraries: https://github.com/marshalltaylorSFE/Proto-8
