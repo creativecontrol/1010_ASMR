@@ -4,10 +4,10 @@
  * inspired by the 4ms Spectral Multiband Resonator
  * 
  * Author : t@creativecontrol.cc
- * Last revision : 2018.09.13
+ * Last revision : 2018.09.16
  * Processor : Teensy 3.2
  * USB Type : Serial + MIDI + Audio
- * Status : Untested Draft
+ * Status : Tested, needs work on input scaling
  * 
  * The ASMR consists of 8 oscillators. The user sets: 
  * - the scale type (major, minor, chormatic, or pentatonic)
@@ -24,54 +24,41 @@
  * 
  */
 
-// TODO : run calibration routine and update cv colibration values
-
 #include <Audio.h>
 #include <Wire.h>
 #include <SPI.h>
 #include <SD.h>
 #include <SerialFlash.h>
 
-#include "synth_dc_binary.h"
-#include "synth_multiosc.h"
-
 // GUItool: begin automatically generated code
-AudioInputI2S              i2s2;           //xy=138,242
-AudioSynthWaveformDcBinary controlIn1;     //xy=169,594
-AudioSynthWaveformDcBinary controlIn2;     //xy=169,681
-AudioSynthWaveformDcBinary controlIn3;     //xy=170,638
-AudioSynthWaveformDcBinary controlIn4;     //xy=170,730
-AudioSynthWaveformDcBinary controlIn5;     //xy=199,400
-AudioSynthWaveformDcBinary controlIn6;     //xy=199,474
-AudioSynthWaveformDcBinary controlIn7;     //xy=200,438
-AudioSynthWaveformDcBinary controlIn8;     //xy=200,515
-AudioSynthMultiOsc         multiosc1;      //xy=356,400
-AudioSynthMultiOsc         multiosc2;      //xy=356,590
-AudioAnalyzePeak           cvIn1;          //xy=366,230
-AudioAnalyzePeak           cvIn2;          //xy=374,270
-AudioMixer4                mixer1;         //xy=530,470
-AudioOutputI2S             i2s1;           //xy=679,476
-AudioConnection            patchCord1(i2s2, 0, cvIn1, 0);
-AudioConnection            patchCord2(i2s2, 1, cvIn2, 0);
-AudioConnection            patchCord3(controlIn1, 0, multiosc1, 5);
-AudioConnection            patchCord4(controlIn2, 0, multiosc1, 6);
-AudioConnection            patchCord5(controlIn3, 0, multiosc1, 7);
-AudioConnection            patchCord6(controlIn4, 0, multiosc1, 8);
-AudioConnection            patchCord7(controlIn5, 0, multiosc2, 5);
-AudioConnection            patchCord8(controlIn6, 0, multiosc2, 6);
-AudioConnection            patchCord9(controlIn7, 0, multiosc2, 7);
-AudioConnection            patchCord10(controlIn8, 0, multiosc2, 8);
-AudioConnection            patchCord11(multiosc1, 0, mixer1, 0);
-AudioConnection            patchCord12(multiosc2, 0, mixer1, 1);
-AudioConnection            patchCord13(mixer1, 0, i2s1, 0);
-AudioControlSGTL5000       sgtl5000_1;     //xy=381,791
+AudioInputI2S            i2s1;           //xy=143.3333282470703,106.33333396911621
+AudioAnalyzePeak         cvIn1;          //xy=315.3333282470703,90.33333396911621
+AudioAnalyzePeak         cvIn2;          //xy=315.3333282470703,125.33333396911621
+AudioSynthWaveformSine   sine2;          //xy=553.3333358764648,131.666672706604
+AudioSynthWaveformSine   sine4;          //xy=553.3333587646484,214.99999237060547
+AudioSynthWaveformSine   sine1;          //xy=555.0000305175781,86.66669464111328
+AudioSynthWaveformSine   sine3;          //xy=554.9999847412109,173.33334922790527
+AudioMixer4              mixer1;         //xy=745.0000305175781,103.33332443237305
+AudioOutputI2S           i2s2;           //xy=905,104.99999809265137
+AudioConnection          patchCord1(i2s1, 0, cvIn1, 0);
+AudioConnection          patchCord2(i2s1, 1, cvIn2, 0);
+AudioConnection          patchCord3(sine2, 0, mixer1, 1);
+AudioConnection          patchCord4(sine4, 0, mixer1, 3);
+AudioConnection          patchCord5(sine1, 0, mixer1, 0);
+AudioConnection          patchCord6(sine3, 0, mixer1, 2);
+AudioConnection          patchCord7(mixer1, 0, i2s2, 0);
+AudioConnection          patchCord8(mixer1, 0, i2s2, 1);
+AudioControlSGTL5000     sgtl5000_1;     //xy=194.3333282470703,249.3333339691162
 // GUItool: end automatically generated code
 
+
+
+
 // Use the 1010VCOCalibration sketch to learn how these values were measured.
-#define cvLow_IN1          0.2088
-#define cvHigh_IN1         0.7627
-#define cvLow_IN2          0.2092
-#define cvHigh_IN2         0.7649
+#define cvLow_IN1          0.2100
+#define cvHigh_IN1         0.7689
+#define cvLow_IN2          0.2089
+#define cvHigh_IN2         0.7686
 #define kC1VFrequency      32.703
 #define octave             12
 
@@ -82,12 +69,17 @@ const int potRange  = 1024;
 const int buttonInput = 2;
 const int topLED = 6;
 const int botLED = 3;
-const int delayTime = 2;
+const int delayTime = 20;
+
+#define ledPinCount 4
+int ledPins[ledPinCount] = { 3, 4, 5, 6 };
+int ledPos = 0;
+
 
 // CV
 float cvCenterPoint_IN1 = (cvHigh_IN1 - cvLow_IN1) / 2;
 float cvCenterPoint_IN2 = (cvHigh_IN2 - cvLow_IN2) / 2;
-float cvDeadZone = 0.05 / 2;  // value must deviate more than 0.05 around the center point
+float cvDeadZone = 0.1 / 2;  // value must deviate more than 0.05 around the center point
 
 // Scales
 const int scaleLength = 24;
@@ -118,7 +110,7 @@ void setup(){
   AudioNoInterrupts();
   // Memory is required for audio processing.
   // This may be tweaked up to about 195 before running out of memory on the Teensy 3.2.
-  AudioMemory(175);
+  AudioMemory(150);
 
   // Enable the audio shield, select input, and enable output
   sgtl5000_1.enable();
@@ -128,17 +120,30 @@ void setup(){
   sgtl5000_1.lineInLevel(0,0);
   sgtl5000_1.unmuteHeadphone();
 
-  // Setup the Proto-8 multiosc object with standard waveform and full volume.
-  multiosc1.amplitude(0, 255);
-  multiosc2.amplitude(0, 255);
+  sine1.frequency(0);
+  sine1.amplitude(0.5);
+  sine2.frequency(0);
+  sine2.amplitude(0.5);
+  sine3.frequency(0);
+  sine3.amplitude(0.5);
+  sine4.frequency(0);
+  sine4.amplitude(0.5);
+  
+  updateOsc();
 
-  multiosc1.begin();
-  multiosc2.begin();
+  for (int i = 0; i < ledPinCount; i++)
+    pinMode(ledPins[i], OUTPUT);
+  pinMode(buttonInput, INPUT);
 
   // Start audio processing.
   AudioInterrupts();
+
+  
 }
 
+float midiToFreq(float note){
+  return (440.0 * powf(2.0, (float)(note - 69) * 0.08333333));
+}
 /*
  *  
  */
@@ -161,19 +166,24 @@ float calCvFromPeakValue(float peakValue, float peakLow, float peakHigh){
 int * scaleType(int cv) {
   switch (cv){
     case 0:
-      return (int *) major;
-      break;
-    case 1:
-      return (int *) minor;
-      break;
-    case 2:
-      return (int *) chromatic;
-      break;
-    case 3:
+      Serial.println("pentatonic");
       return (int *) pentatonic;
       break;
-    default:
+    case 1:
+      Serial.println("major");
       return (int *) major;
+      break;
+    case 2:
+      Serial.println("minor");
+      return (int *) minor;
+      break;
+    case 3:
+      Serial.println("chromatic");
+      return (int *) chromatic;
+      break;
+    default:
+      Serial.println("pentatonic");
+      return (int *) pentatonic;
       break;
   }
 }
@@ -188,14 +198,26 @@ void turnOffLEDs() {
  */
 void updateOsc() {
   int bass = startNote + midiOffset;
-  controlIn1.amplitude_midi_key(bass + scale[rotatePosition]);
-  controlIn2.amplitude_midi_key(bass + scale[((rotatePosition + (spread * 1)) % scaleLength)]);
-  controlIn3.amplitude_midi_key(bass + scale[((rotatePosition + (spread * 2)) % scaleLength)]);
-  controlIn4.amplitude_midi_key(bass + scale[((rotatePosition + (spread * 3)) % scaleLength)]);
-  controlIn5.amplitude_midi_key(bass + scale[((rotatePosition + (spread * 4)) % scaleLength)]);
-  controlIn6.amplitude_midi_key(bass + scale[((rotatePosition + (spread * 5)) % scaleLength)]);
-  controlIn7.amplitude_midi_key(bass + scale[((rotatePosition + (spread * 6)) % scaleLength)]);
-  controlIn8.amplitude_midi_key(bass + scale[((rotatePosition + (spread * 7)) % scaleLength)]);
+
+  sine1.frequency(midiToFreq(bass + scale[rotatePosition]));
+  sine2.frequency(midiToFreq(bass + scale[((rotatePosition + (spread * 1)) % scaleLength)]));
+  sine3.frequency(midiToFreq(bass + scale[((rotatePosition + (spread * 2)) % scaleLength)]));
+  sine4.frequency(midiToFreq(bass + scale[((rotatePosition + (spread * 3)) % scaleLength)]));
+  
+
+//  Serial.print("bass ");
+//  Serial.println(bass);
+//  Serial.print("start note ");
+//  Serial.print(lastStartNote);
+//  Serial.print(" ");
+//  Serial.println(startNote);
+//  Serial.print("spread ");
+//  Serial.println(spread);
+//  Serial.print("rotation ");
+//  Serial.println(rotatePosition);
+//  Serial.println(bass + scale[rotatePosition]);
+
+  turnOffLEDs();
 }
 
 /*
@@ -222,7 +244,7 @@ void loop() {
 
   // Button input reads low when pressed.
   if(digitalRead(buttonInput) == LOW) {
-    rotatePosition += rotatePosition;
+    rotatePosition += 1;
     rotatePosition = rotatePosition % scaleLength;
     readyForUpdate = true;
     digitalWrite(topLED, HIGH);
@@ -230,23 +252,28 @@ void loop() {
   
   if (cvIn1.available()) {
     float cvValue1 = cvIn1.read();
-    float cvInput = calCvFromPeakValue(cvValue1, cvLow_IN1, cvHigh_IN1);
-    if (cvInput < (cvCenterPoint_IN1 - cvDeadZone)){
-      rotatePosition -= rotatePosition;
-      digitalWrite(botLED, HIGH);
-    } else if (cvInput > (cvCenterPoint_IN1 + cvDeadZone)) {
-      rotatePosition += rotatePosition;
+    float cvInput1 = calCvFromPeakValue(cvValue1, cvLow_IN1, cvHigh_IN1);
+    int rotationTemp = rotatePosition;
+    if (cvInput1 < (cvCenterPoint_IN1 - cvDeadZone)){
+      //rotationTemp -= 1;
+      //digitalWrite(botLED, HIGH);
+    } else if (cvInput1 > (cvCenterPoint_IN1 + cvDeadZone)) {
+      rotationTemp += 1;
       digitalWrite(topLED, HIGH);
     }
-    rotatePosition = rotatePosition % scaleLength;
+    rotatePosition = rotationTemp % scaleLength;
     
     readyForUpdate = true;
   }
 
   if (cvIn2.available()) {
     float cvValue2 = cvIn2.read();
-    float cvInput = calCvFromPeakValue(cvValue2, cvLow_IN2, cvHigh_IN2);
-    int cvScale = int(map(cvInput, cvLow_IN2, cvHigh_IN2, 0, numScales - 1));
+//    Serial.println(cvValue2);
+    float cvInput2 = calCvFromPeakValue(cvValue2, cvLow_IN2, cvHigh_IN2);
+//    Serial.println(cvInput);
+    int cvScale = int(map(cvInput2, 0, 3, 0, numScales-1));
+//    Serial.println(cvScale);
+    //int cvScale = int(map(cvValue2, cvLow_IN2, cvHigh_IN2, 0, numScales - 1));
     scale = scaleType(cvScale); 
     readyForUpdate = true;
   }
